@@ -1,4 +1,79 @@
-"${GITHUB_WORKSPACE}/work" << 'PYEOF'
+name: Build RMX2072 (F.20) KernelSU v0.9.5
+
+on:
+  workflow_dispatch:
+    inputs:
+      boot_img_url_or_path: "
+        description: "原厂 boot 镜像路径或直链 URL (默认读取仓库根目录的 boot(F20).img 或从 Release 下载)"
+        required: false
+        default: "boot(F20).img"
+      ksu_mode:
+        description: "KernelSU 集成模式: manual (手动内联 Hook，推荐) 或 kprobe"
+        required: false
+        default: "manual"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - ".github/workflows/build_rmx2072_ksu.yml"
+      - "boot*.img"
+
+permissions:
+  contents: write
+
+jobs:
+  build-kernelsu:
+    name: Compile KernelSU v0.9.5 for RMX2072 (realme UI 3.0 F.20)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+
+    steps:
+      - name: 1. 清理云端虚拟机冗余磁盘空间 (释放约 25GB 空间)
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
+      - name: 2. 检出当前你的 GitHub 仓库文件
+        uses: actions/checkout@v4
+
+      - name: 3. 安装内核编译基础依赖环境
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git curl wget bc bison flex libssl-dev make libc6-dev \
+            libncurses5-dev libelf-dev zip unzip python3 cpio lz4 zstd \
+            device-tree-compiler build-essential
+
+      - name: 4. 定位并解包原厂 boot(F20).img (提取 IKCONFIG / Ramdisk / DTB)
+        id: unpack
+        env:
+          INPUT_BOOT: ${{ github.event.inputs.boot_img_url_or_path || 'boot(F20).img' }}
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/work"
+          BOOT_FILE=""
+
+          if [[ "$INPUT_BOOT" =~ ^https?:// ]]; then
+            echo "正在从 URL 下载原厂 boot.img..."
+            curl -L "$INPUT_BOOT" -o "${GITHUB_WORKSPACE}/work/stock_boot.img"
+            BOOT_FILE="${GITHUB_WORKSPACE}/work/stock_boot.img"
+          elif [ -f "$INPUT_BOOT" ]; then
+            BOOT_FILE="$(realpath "$INPUT_BOOT")"
+          else
+            # 自动搜索仓库内的 .img 文件
+            FOUND_IMG=$(find . -maxdepth 2 -name "*.img" | head -n 1 || true)
+            if [ -n "$FOUND_IMG" ]; then
+              BOOT_FILE="$(realpath "$FOUND_IMG")"
+            else
+              echo "::error::未在仓库根目录找到 boot(F20).img！请先将 boot(F20).img 上传至仓库或填入下载直链。"
+              exit 1
+            fi
+          fi
+
+          echo "使用的原厂镜像: $BOOT_FILE"
+          echo "STOCK_BOOT=$BOOT_FILE" >> $GITHUB_ENV
+
+          python3 - "$BOOT_FILE" "${GITHUB_WORKSPACE}/work" << 'PYEOF'
           import sys, struct, gzip, os
 
           boot_path, workdir = sys.argv[1], sys.argv[2]
