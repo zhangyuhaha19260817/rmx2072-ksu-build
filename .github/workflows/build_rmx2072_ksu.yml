@@ -3,7 +3,7 @@ name: Build RMX2072 KSU
 "on":
   workflow_dispatch:
     inputs:
-      boot_img_url_or_path:
+      boot_img_url_or_path:https://github.com/zhangyuhaha19260817/rmx2072-ksu-build/releases/download/v1.0/boot.F20.img
         description: "Boot image URL or path (default: auto detect from Releases)"
         required: false
         default: "auto"
