@@ -6632,6 +6632,47 @@ fastboot flash boot boot_RMX2072_F20_KSU_v0.9.5.img
 fastboot reboot
 安装管理器：开机后下载并安装与内核版本对应的 KernelSU Manager v0.9.5 APK（注意安装 v0.9.5 版本的管理器 APK），打开显示“工作中”即代表大功告成！如果在运行 Actions 过程中遇到任何报错日志，随时把报错截图或文字发给我，我帮你排查调整。
 
+在左侧列表中点击 Build RMX2072 (F.20) KernelSU v0.9.5没看到meikandaomeikandameikandmeikanmeikameikmeimem
+
+看到你的截图了！左侧列表显示成了 .github/workflows/build_rmx2072_ksu.yml 而不是工作流名称，并且右侧两次运行瞬间变成红色叉号 Failure，原因找到了：
+
+为什么没看到名称且直接失败？
+YAML 缩进包含 Tab 制表符导致解析失败：上一版内联的 C 语言补丁代码中包含了 C 语言原生的 Tab 缩进符，GitHub Actions 的严格 YAML 解析器一旦遇到 Tab 字符就会拒绝解析该文件——因此它没能读取到顶部的 name: Build RMX2072 (F.20) KernelSU v0.9.5，只能退而求其次在左侧显示文件路径 .github/workflows/build_rmx2072_ksu.yml，也不会显示 Run workflow 按钮。
+
+保存时自动触发运行但还没上传 boot(F20).img：之前开启了 push 自动触发，你一保存 .yml 文件它就立刻自动跑起来了。
+
+我已经为你彻底修复并重新生成了 零 Tab 字符、纯空格缩进 的新版 build_rmx2072_ksu.yml，并且加入了自动从你的仓库 Releases 中寻找 boot(F20).img 的功能：
+
+YML 图标
+build_rmx2072_ksu
+ YML 
+接下来只需按这 3 步操作即可解决：
+先把你的 boot(F20).img 上传到仓库 Releases（如果还没上传）
+
+点击你仓库顶部最左侧的 <> Code 回到主页，看页面右侧边栏的 Releases -> 点击 Create a new release。
+
+在 Choose a tag 里输入 v1.0，点击弹出的 + Create new tag: v1.0 on publish。
+
+把电脑上的 boot(F20).img 拖进底部的虚线框（Attach binaries by dropping them here...），等上传进度条走完，点击最下方的绿色按钮 Publish release。（新版脚本会自动去你的 Release 里抓取这个 .img 文件，甚至不需要你手动复制链接！）
+
+用上面修复后的内容替换 .github/workflows/build_rmx2072_ksu.yml
+
+点回仓库左上角的 <> Code -> 点进 .github/workflows 文件夹 -> 点击 build_rmx2072_ksu.yml。
+
+点击文件内容区域右上角的 铅笔图标（Edit this file）。
+
+Ctrl + A 全选里面的旧内容并删除，把上面新生成的 build_rmx2072_ksu.yml 内容完整复制粘贴进去。
+
+点击右上角绿色的 Commit changes... -> 在弹窗中再点一次 Commit changes 保存。
+
+回到 Actions 点击 Run workflow 启动编译
+
+点击顶部导航栏的 Actions。
+
+此时左侧列表中的 .github/workflows/build_rmx2072_ksu.yml 就会正常变成 Build RMX2072 (F.20) KernelSU v0.9.5！
+
+点击左侧的 Build RMX2072 (F.20) KernelSU v0.9.5，再点击右侧出现的 Run workflow 按钮 -> 直接点击绿色的 Run workflow（保持默认的 auto 和 manual 即可），云端就会开始正常编译了。
+
 Gemini 是一款 AI 工具，其回答未必正确无误。
 
 
@@ -6648,20 +6689,13 @@ on:
   workflow_dispatch:
     inputs:
       boot_img_url_or_path:
-        description: "原厂 boot 镜像路径或直链 URL (默认读取仓库根目录的 boot(F20).img 或从 Release 下载)"
+        description: "原厂 boot 镜像直链 URL 或仓库内文件名 (留空则自动查找 Release 或仓库内的 .img)"
         required: false
-        default: "boot(F20).img"
+        default: "auto"
       ksu_mode:
         description: "KernelSU 集成模式: manual (手动内联 Hook，推荐) 或 kprobe"
         required: false
         default: "manual"
-  push:
-    branches:
-      - main
-      - master
-    paths:
-      - ".github/workflows/build_rmx2072_ksu.yml"
-      - "boot*.img"
 
 permissions:
   contents: write
@@ -6673,12 +6707,12 @@ jobs:
     timeout-minutes: 120
 
     steps:
-      - name: 1. 清理云端虚拟机冗余磁盘空间 (释放约 25GB 空间)
+      - name: 1. 清理云端虚拟机冗余空间 (释放约 25GB 空间)
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h
 
-      - name: 2. 检出当前你的 GitHub 仓库文件
+      - name: 2. 检出当前 GitHub 仓库文件
         uses: actions/checkout@v4
 
       - name: 3. 安装内核编译基础依赖环境
@@ -6687,37 +6721,49 @@ jobs:
           sudo apt-get install -y \
             git curl wget bc bison flex libssl-dev make libc6-dev \
             libncurses5-dev libelf-dev zip unzip python3 cpio lz4 zstd \
-            device-tree-compiler build-essential
+            device-tree-compiler build-essential jq
 
-      - name: 4. 定位并解包原厂 boot(F20).img (提取 IKCONFIG / Ramdisk / DTB)
-        id: unpack
+      - name: 4. 自动获取并解包原厂 boot(F20).img (提取 IKCONFIG / Ramdisk / DTB)
         env:
-          INPUT_BOOT: ${{ github.event.inputs.boot_img_url_or_path || 'boot(F20).img' }}
+          INPUT_BOOT: ${{ github.event.inputs.boot_img_url_or_path || 'auto' }}
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p "${GITHUB_WORKSPACE}/work"
           BOOT_FILE=""
 
           if [[ "$INPUT_BOOT" =~ ^https?:// ]]; then
-            echo "正在从 URL 下载原厂 boot.img..."
+            echo "正在从指定的直链 URL 下载原厂 boot.img..."
             curl -L "$INPUT_BOOT" -o "${GITHUB_WORKSPACE}/work/stock_boot.img"
             BOOT_FILE="${GITHUB_WORKSPACE}/work/stock_boot.img"
-          elif [ -f "$INPUT_BOOT" ]; then
+          elif [ "$INPUT_BOOT" != "auto" ] && [ -f "$INPUT_BOOT" ]; then
             BOOT_FILE="$(realpath "$INPUT_BOOT")"
           else
-            # 自动搜索仓库内的 .img 文件
+            # 1) 先在仓库目录内查找 .img 文件
             FOUND_IMG=$(find . -maxdepth 2 -name "*.img" | head -n 1 || true)
             if [ -n "$FOUND_IMG" ]; then
               BOOT_FILE="$(realpath "$FOUND_IMG")"
             else
-              echo "::error::未在仓库根目录找到 boot(F20).img！请先将 boot(F20).img 上传至仓库或填入下载直链。"
-              exit 1
+              # 2) 自动从当前仓库的 GitHub Releases 下载第一个 .img 附件
+              echo "仓库目录未找到 .img，尝试自动从当前仓库的 Releases 中查找上传的 boot(F20).img..."
+              RELEASE_ASSET_URL=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
+                "https://api.github.com/repos/${GH_REPO}/releases" | \
+                jq -r '.[].assets[] | select(.name | endswith(".img")) | .browser_download_url' | head -n 1 || true)
+              if [ -n "$RELEASE_ASSET_URL" ] && [ "$RELEASE_ASSET_URL" != "null" ]; then
+                echo "在 Releases 中找到镜像: $RELEASE_ASSET_URL ，正在下载..."
+                curl -L "$RELEASE_ASSET_URL" -o "${GITHUB_WORKSPACE}/work/stock_boot.img"
+                BOOT_FILE="${GITHUB_WORKSPACE}/work/stock_boot.img"
+              else
+                echo "::error::未找到原厂 boot(F20).img！请先在仓库右侧 Releases 中上传 boot(F20).img，或在 Run workflow 时填入下载直链。"
+                exit 1
+              fi
             fi
           fi
 
           echo "使用的原厂镜像: $BOOT_FILE"
           echo "STOCK_BOOT=$BOOT_FILE" >> $GITHUB_ENV
 
-          python3 - "$BOOT_FILE" "${GITHUB_WORKSPACE}/work" << 'PYEOF'
+          cat << 'EOF' > "${GITHUB_WORKSPACE}/work/unpack_boot.py"
           import sys, struct, gzip, os
 
           boot_path, workdir = sys.argv[1], sys.argv[2]
@@ -6728,14 +6774,8 @@ jobs:
               raise SystemExit("错误: 文件不是合法的 ANDROID! boot.img 镜像")
 
           kernel_size, kernel_addr, ramdisk_size, ramdisk_addr, second_size, second_addr, tags_addr, page_size, header_version, os_version = struct.unpack("<10I", header[8:48])
-          dtb_size, dtb_addr = struct.unpack("<IQ", header[1648:1648+12])
-
-          def align(sz, pg):
-              return ((sz + pg - 1) // pg) * pg
 
           k_off = page_size
-          r_off = k_off + align(kernel_size, page_size)
-
           with open(boot_path, "rb") as f:
               f.seek(k_off)
               k_data = f.read(kernel_size)
@@ -6749,7 +6789,9 @@ jobs:
               print(f"成功从 {os.path.basename(boot_path)} 提取原厂 IKCONFIG 配置 (共 {len(cfg_text)} 字节)！")
           else:
               raise SystemExit("错误: 未能在原厂内核中检测到 IKCFG_ST 配置段")
-          PYEOF
+          EOF
+
+          python3 "${GITHUB_WORKSPACE}/work/unpack_boot.py" "$BOOT_FILE" "${GITHUB_WORKSPACE}/work"
 
       - name: 5. 克隆 Realme SM8250 (4.19.157) 内核源码与 Proton-Clang 工具链
         run: |
@@ -6766,10 +6808,8 @@ jobs:
           KSU_MODE: ${{ github.event.inputs.ksu_mode || 'manual' }}
         working-directory: ${{ github.workspace }}/kernel_src
         run: |
-          # 1. 拉取最后支持 Non-GKI 4.19 的官方 KernelSU v0.9.5
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v0.9.5
 
-          # 2. 移除 OplusKernelEnvConfig.mk 中的防 Root 宏拦截
           if [ -f "OplusKernelEnvConfig.mk" ]; then
             sed -i 's/CONFIG_OPLUS_SECURE_GUARD=y/CONFIG_OPLUS_SECURE_GUARD=n/g' OplusKernelEnvConfig.mk || true
             sed -i 's/CONFIG_OPLUS_ROOT_CHECK=y/CONFIG_OPLUS_ROOT_CHECK=n/g' OplusKernelEnvConfig.mk || true
@@ -6778,8 +6818,7 @@ jobs:
             sed -i 's/-DCONFIG_OPLUS_SECURE_GUARD//g; s/-DCONFIG_OPLUS_ROOT_CHECK//g; s/-DCONFIG_OPLUS_MOUNT_BLOCK//g; s/-DCONFIG_OPLUS_EXECVE_BLOCK//g' OplusKernelEnvConfig.mk || true
           fi
 
-          # 3. 注入内联 Hook 与 path_umount 补丁
-          python3 - "$KSU_MODE" << 'PYEOF'
+          cat << 'EOF' > "${GITHUB_WORKSPACE}/work/apply_ksu_patches.py"
           import sys, os
 
           mode = sys.argv[1]
@@ -6807,172 +6846,154 @@ jobs:
               patch_file(
                   "fs/exec.c",
                   "static int do_execveat_common(int fd, struct filename *filename,",
-                  """#ifdef CONFIG_KSU
-          extern bool ksu_execveat_hook __read_mostly;
-          extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,
-          			void *envp, int *flags);
-          extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,
-          				 void *argv, void *envp, int *flags);
-          #endif
-          """,
+                  "#ifdef CONFIG_KSU\n"
+                  "extern bool ksu_execveat_hook __read_mostly;\n"
+                  "extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr, void *argv,\n"
+                  "                        void *envp, int *flags);\n"
+                  "extern int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr,\n"
+                  "                                 void *argv, void *envp, int *flags);\n"
+                  "#endif\n",
                   "ksu_handle_execveat"
               )
               patch_file(
                   "fs/exec.c",
                   "return __do_execve_file(fd, filename, argv, envp, flags, NULL);",
-                  """#ifdef CONFIG_KSU
-          	if (unlikely(ksu_execveat_hook))
-          		ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
-          	else
-          		ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
-          #endif
-          	""",
+                  "#ifdef CONFIG_KSU\n"
+                  "        if (unlikely(ksu_execveat_hook))\n"
+                  "                ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);\n"
+                  "        else\n"
+                  "                ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);\n"
+                  "#endif\n        ",
                   "ksu_handle_execveat(&fd"
               )
 
               patch_file(
                   "fs/open.c",
                   "long do_faccessat(int dfd, const char __user *filename, int mode)",
-                  """#ifdef CONFIG_KSU
-          extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
-          			 int *flags);
-          #endif
-          """,
+                  "#ifdef CONFIG_KSU\n"
+                  "extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,\n"
+                  "                         int *flags);\n"
+                  "#endif\n",
                   "ksu_handle_faccessat"
               )
               patch_file(
                   "fs/open.c",
                   "if (mode & ~S_IRWXO)",
-                  """#ifdef CONFIG_KSU
-          	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
-          #endif
-          	""",
+                  "#ifdef CONFIG_KSU\n"
+                  "        ksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n"
+                  "#endif\n        ",
                   "ksu_handle_faccessat(&dfd"
               )
 
               patch_file(
                   "fs/read_write.c",
                   "ssize_t vfs_read(struct file *file, char __user *buf, size_t count, loff_t *pos)",
-                  """#ifdef CONFIG_KSU
-          extern bool ksu_vfs_read_hook __read_mostly;
-          extern int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr,
-          			size_t *count_ptr, loff_t **pos);
-          #endif
-          """,
+                  "#ifdef CONFIG_KSU\n"
+                  "extern bool ksu_vfs_read_hook __read_mostly;\n"
+                  "extern int ksu_handle_vfs_read(struct file **file_ptr, char __user **buf_ptr,\n"
+                  "                        size_t *count_ptr, loff_t **pos);\n"
+                  "#endif\n",
                   "ksu_handle_vfs_read"
               )
               patch_file(
                   "fs/read_write.c",
                   "if (!(file->f_mode & FMODE_READ))",
-                  """#ifdef CONFIG_KSU
-          	if (unlikely(ksu_vfs_read_hook))
-          		ksu_handle_vfs_read(&file, &buf, &count, &pos);
-          #endif
-          	""",
+                  "#ifdef CONFIG_KSU\n"
+                  "        if (unlikely(ksu_vfs_read_hook))\n"
+                  "                ksu_handle_vfs_read(&file, &buf, &count, &pos);\n"
+                  "#endif\n        ",
                   "ksu_handle_vfs_read(&file"
               )
 
               patch_file(
                   "fs/stat.c",
                   "int vfs_statx(int dfd, const char __user *filename, int flags,",
-                  """#ifdef CONFIG_KSU
-          extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
-          #endif
-          """,
+                  "#ifdef CONFIG_KSU\n"
+                  "extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);\n"
+                  "#endif\n",
                   "ksu_handle_stat"
               )
               patch_file(
                   "fs/stat.c",
                   "if ((flags & ~(AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT |",
-                  """#ifdef CONFIG_KSU
-          	ksu_handle_stat(&dfd, &filename, &flags);
-          #endif
-          	""",
+                  "#ifdef CONFIG_KSU\n"
+                  "        ksu_handle_stat(&dfd, &filename, &flags);\n"
+                  "#endif\n        ",
                   "ksu_handle_stat(&dfd"
               )
 
               patch_file(
                   "drivers/input/input.c",
                   "static void input_handle_event(struct input_dev *dev,",
-                  """#ifdef CONFIG_KSU
-          extern bool ksu_input_hook __read_mostly;
-          extern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);
-          #endif
-          """,
+                  "#ifdef CONFIG_KSU\n"
+                  "extern bool ksu_input_hook __read_mostly;\n"
+                  "extern int ksu_handle_input_handle_event(unsigned int *type, unsigned int *code, int *value);\n"
+                  "#endif\n",
                   "ksu_handle_input_handle_event"
               )
               patch_file(
                   "drivers/input/input.c",
                   "if (disposition != INPUT_IGNORE_EVENT && type != EV_SYN)",
-                  """#ifdef CONFIG_KSU
-          	if (unlikely(ksu_input_hook))
-          		ksu_handle_input_handle_event(&type, &code, &value);
-          #endif
-          	""",
+                  "#ifdef CONFIG_KSU\n"
+                  "        if (unlikely(ksu_input_hook))\n"
+                  "                ksu_handle_input_handle_event(&type, &code, &value);\n"
+                  "#endif\n        ",
                   "ksu_handle_input_handle_event(&type"
               )
 
               patch_file(
                   "fs/devpts/inode.c",
                   "void *devpts_get_priv(struct dentry *dentry)",
-                  """#ifdef CONFIG_KSU
-          extern int ksu_handle_devpts(struct inode*);
-          #endif
-          """,
+                  "#ifdef CONFIG_KSU\n"
+                  "extern int ksu_handle_devpts(struct inode*);\n"
+                  "#endif\n",
                   "ksu_handle_devpts"
               )
               patch_file(
                   "fs/devpts/inode.c",
                   "if (dentry->d_sb->s_magic != DEVPTS_SUPER_MAGIC)",
-                  """#ifdef CONFIG_KSU
-          	ksu_handle_devpts(dentry->d_inode);
-          #endif
-          	""",
+                  "#ifdef CONFIG_KSU\n"
+                  "        ksu_handle_devpts(dentry->d_inode);\n"
+                  "#endif\n        ",
                   "ksu_handle_devpts(dentry->d_inode)"
               )
 
-          # 无论何种模式均注入 path_umount 以支持模块卸载
           patch_file(
               "fs/namespace.c",
               "int ksys_umount(char __user *name, int flags)",
-              """static int can_umount(const struct path *path, int flags)
-          {
-          	struct mount *mnt = real_mount(path->mnt);
-
-          	if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))
-          		return -EINVAL;
-          	if (!may_mount())
-          		return -EPERM;
-          	if (path->dentry != path->mnt->mnt_root)
-          		return -EINVAL;
-          	if (!check_mnt(mnt))
-          		return -EINVAL;
-          	if (mnt->mnt.mnt_flags & MNT_LOCKED) /* Check optimistically */
-          		return -EINVAL;
-          	if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))
-          		return -EPERM;
-          	return 0;
-          }
-
-          int path_umount(struct path *path, int flags)
-          {
-          	struct mount *mnt = real_mount(path->mnt);
-          	int ret;
-
-          	ret = can_umount(path, flags);
-          	if (!ret)
-          		ret = do_umount(mnt, flags);
-
-          	/* we mustn't call path_put() as that would clear mnt_expiry_mark */
-          	dput(path->dentry);
-          	mntput_no_expire(mnt);
-          	return ret;
-          }
-
-          """,
+              "static int can_umount(const struct path *path, int flags)\n"
+              "{\n"
+              "        struct mount *mnt = real_mount(path->mnt);\n"
+              "        if (flags & ~(MNT_FORCE | MNT_DETACH | MNT_EXPIRE | UMOUNT_NOFOLLOW))\n"
+              "                return -EINVAL;\n"
+              "        if (!may_mount())\n"
+              "                return -EPERM;\n"
+              "        if (path->dentry != path->mnt->mnt_root)\n"
+              "                return -EINVAL;\n"
+              "        if (!check_mnt(mnt))\n"
+              "                return -EINVAL;\n"
+              "        if (mnt->mnt.mnt_flags & MNT_LOCKED)\n"
+              "                return -EINVAL;\n"
+              "        if (flags & MNT_FORCE && !capable(CAP_SYS_ADMIN))\n"
+              "                return -EPERM;\n"
+              "        return 0;\n"
+              "}\n\n"
+              "int path_umount(struct path *path, int flags)\n"
+              "{\n"
+              "        struct mount *mnt = real_mount(path->mnt);\n"
+              "        int ret;\n"
+              "        ret = can_umount(path, flags);\n"
+              "        if (!ret)\n"
+              "                ret = do_umount(mnt, flags);\n"
+              "        dput(path->dentry);\n"
+              "        mntput_no_expire(mnt);\n"
+              "        return ret;\n"
+              "}\n\n",
               "int path_umount("
           )
-          PYEOF
+          EOF
+
+          python3 "${GITHUB_WORKSPACE}/work/apply_ksu_patches.py" "$KSU_MODE"
 
           if ! grep -q "path_umount" include/linux/fs.h; then
             sed -i '/extern int finish_open(/i extern int path_umount(struct path *path, int flags);' include/linux/fs.h || true
@@ -7035,8 +7056,7 @@ jobs:
 
           cp -f "$NEW_IMAGE" "${OUT_DIR}/Image"
 
-          # 1. 使用原厂 boot(F20).img 的 Header v2 + 原厂 Ramdisk + 原厂 DTB 无损重打包
-          python3 - "$STOCK_BOOT" "$NEW_IMAGE" "${OUT_DIR}/boot_RMX2072_F20_KSU_v0.9.5.img" << 'PYEOF'
+          cat << 'EOF' > "${GITHUB_WORKSPACE}/work/repack_boot.py"
           import sys, struct
 
           orig_boot, new_kernel_path, out_boot = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -7080,9 +7100,10 @@ jobs:
               out.write(pad_bytes(dtb_data, page_size))
 
           print(f"成功生成重打包镜像: {out_boot}")
-          PYEOF
+          EOF
 
-          # 2. 同时打包一份 AnyKernel3 卡刷包 (方便 TWRP / Kernel Flasher 刷入)
+          python3 "${GITHUB_WORKSPACE}/work/repack_boot.py" "$STOCK_BOOT" "$NEW_IMAGE" "${OUT_DIR}/boot_RMX2072_F20_KSU_v0.9.5.img"
+
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git "${GITHUB_WORKSPACE}/AnyKernel3"
           cd "${GITHUB_WORKSPACE}/AnyKernel3"
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
