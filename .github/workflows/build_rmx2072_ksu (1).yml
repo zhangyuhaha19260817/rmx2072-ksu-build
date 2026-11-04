@@ -3,7 +3,7 @@ name: Build RMX2072 (F.20) KernelSU v0.9.5
 on:
   workflow_dispatch:
     inputs:
-      boot_img_url_or_path:
+      boot_img_url_or_path: "https://github.com/zhangyuhaha19260817/rmx2072-ksu-build/releases/download/v1.0/boot.F20.img"
         description: "原厂 boot 镜像路径或直链 URL (默认读取仓库根目录的 boot(F20).img 或从 Release 下载)"
         required: false
         default: "boot(F20).img"
