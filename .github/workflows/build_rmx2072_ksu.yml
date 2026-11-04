@@ -3,7 +3,7 @@ name: Build RMX2072 (F.20) KernelSU v0.9.5
 on:
   workflow_dispatch:
     inputs:
-      boot_img_url_or_path:
+      boot_img_url_or_path: "https://release-assets.githubusercontent.com/github-production-release-asset/1445200592/b8090ea6-ae84-4396-a45a-0ece56a79260?sp=r&sv=2018-11-09&sr=b&spr=https&se=2026-11-04T08%3A00%3A25Z&rscd=attachment%3B+filename%3Dboot.F20.img&rsct=application%2Foctet-stream&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2026-11-04T06%3A59%3A35Z&ske=2026-11-04T08%3A00%3A25Z&sks=b&skv=2018-11-09&sig=sg%2Fmuu3VrKrFLIDla%2Bx726Gm5Y5nVfd2GPbOuu45xRk%3D&jwt=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJnaXRodWIuY29tIiwiYXVkIjoicmVsZWFzZS1hc3NldHMuZ2l0aHVidXNlcmNvbnRlbnQuY29tIiwia2V5Ijoia2V5MSIsImV4cCI6MTc5Mzc3ODE5NywibmJmIjoxNzkzNzc2Mzk3LCJwYXRoIjoicmVsZWFzZWFzc2V0cHJvZHVjdGlvbi5ibG9iLmNvcmUud2luZG93cy5uZXQifQ.5sYSHArbkVjXft13An2fqRl0mOFuQAkeGmjromRCi8k&response-content-disposition=attachment%3B%20filename%3Dboot.F20.img&response-content-type=application%2Foctet-stream"
         description: "原厂 boot 镜像路径或直链 URL (默认读取仓库根目录的 boot(F20).img 或从 Release 下载)"
         required: false
         default: "boot(F20).img"
